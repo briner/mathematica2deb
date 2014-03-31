@@ -1,0 +1,250 @@
+#!/bin/bash
+#
+# P R E P A R A T I O N   B E F O R E
+# T H E   M A T L A B   I N S T A L L A T I O N
+#
+if [[ $(uname -m) != 'x86_64' ]] ; then
+    echo "this script only works for amd64 distribution"
+    exit 1
+fi
+
+###########################################################
+# DEFINITION
+#
+
+export SOFT=mathematica
+export SHORT_SOFT_VER=90
+export SOFT_VER=9.0.1
+export DEB_VER=0
+
+# where the matlab files will be installed
+export OPT_PATH=/opt/uau/mathematica90
+
+# root directory where the package will be installed
+export MAIN_DIR=~/packaging/mathematica/90
+
+SHORT_ORG=UniGE ; # a short name of your organisation
+
+# email of the packager of these
+EMAIL_MAINTAINER='Cedric BRINER <Cedric.Briner@UniGE.ch>'
+
+#
+# constructed variable
+export DEB_BUILD=${MAIN_DIR}/${SOFT}${SHORT_SOFT_VER}_${SOFT_VER}-${DEB_VER}
+
+prepare_install()
+{   
+    cd ${MAIN_DIR}
+    #
+    #
+    #
+    echo "prepare the root FS to be able to install matlab under ${OPT_PATH}"
+    sudo mkdir -p ${OPT_PATH}
+    sudo chown briner:  ${OPT_PATH}
+    #
+    #
+    #
+    echo "install it under ${OPT_PATH}"
+    echo "specify  ${OPT_PATH}/bin for the path in which the Wolfram Mathematica script(s) will be created"
+}
+
+###########################################################
+# FONCTIONS
+#
+
+rsync_it()
+{
+    test -d  ${MAIN_DIR}/rsync_${SOFT} || mkdir -p ${MAIN_DIR}/rsync_${SOFT}
+    echo -n "this can take time… "
+    rsync -q -avHl --force --delete ${OPT_PATH}/ ${MAIN_DIR}/rsync_${SOFT}/
+    echo "done"
+}
+
+
+make_deb()
+{
+    cd ${MAIN_DIR}
+    #
+    #
+    # rapatriate the fresh install to the DEB_BUILD SPACE
+    rm -fr ${DEB_BUILD}
+    mkdir -p ${DEB_BUILD}/{${OPT_PATH},usr/bin,DEBIAN}
+    mkdir -p ${DEB_BUILD}/{usr/share/pixmaps,usr/share/applications}
+    rsync -avHlq  ${MAIN_DIR}/rsync_${SOFT}/ ${DEB_BUILD}/${OPT_PATH}/
+    #
+    #
+    # creation of the symlink in /usr/bin
+    rsync -avHlq --force --delete  ${MAIN_DIR}/rsync_${SOFT}/bin/  ${DEB_BUILD}/${OPT_PATH}/bin/
+    cd ${DEB_BUILD}/usr/bin
+    for filebin in ../../${OPT_PATH}/bin/* ; do
+        echo $filebin
+        linkname=$(basename ${filebin})${SHORT_SOFT_VER}
+        mv ${filebin} ${linkname}
+    done
+    cd - > /dev/null
+    #
+    #
+    # creation of the DEBIAN/control
+    cat  > ${DEB_BUILD}/DEBIAN/control << EOF
+Package: ${SOFT}${SHORT_SOFT_VER}
+Version: ${SOFT_VER}-${DEB_VER}
+Architecture: amd64
+Maintainer: ${EMAIL_MAINTAINER}
+Section: main
+Priority: extra
+Depends: xmaxima, ubuntu-at-unige
+Description: ${SOFT} @ ${SHORT_ORG}
+EOF
+    #
+    #
+    # creation of the DEBIAN/postrm (post-remove)
+    cat > ${DEB_BUILD}/DEBIAN/postrm << EOF
+#!/bin/bash
+rm -fr ${OPT_PATH}
+EOF
+    chmod 755  ${DEB_BUILD}/DEBIAN/postrm
+    #
+    #
+    # DESKTOP icon
+    unzip -p ${DEB_BUILD}/${OPT_PATH}/SystemFiles/Java/WolframSSH.jar  com/wolfram/Common/math.png \
+          > ${DEB_BUILD}/usr/share/pixmaps/${SOFT}${SHORT_SOFT_VER}.png
+    cat > ${DEB_BUILD}/usr/share/applications/${SOFT}${SHORT_SOFT_VER}.desktop << EOF
+[Desktop Entry]
+Version=1.0
+Name=${SOFT} ${SOFT_VER}
+Comment=Why not trying freesoftware as xmaxima
+Exec=${SOFT}${SHORT_SOFT_VER}
+Icon=${SOFT}${SHORT_SOFT_VER}.png
+Terminal=false
+Type=Application
+Categories=Development;ubuntu-at-unige;
+EOF
+    
+    #
+    #
+    # construct the package
+    fakeroot dpkg -b ${DEB_BUILD}
+    #
+    #
+    # check rm -fr
+    echo "check rm -fr in postrm"
+    echo "-----------------------"
+    grep 'rm -fr' ${DEB_BUILD}/DEBIAN/control
+
+    echo 'before installing, remove the installation made if the matlab installer' 
+    echo '-----------------------------------------------------------------------'
+    echo "with: sudo rm -fr ${OPT_PATH}"
+}
+
+###########################################################
+# last output
+#
+last_output()
+{
+define_variable
+echo "do fo eg: sudo dpkg  -i ${MAIN_DIR}/*deb"
+}
+
+###########################################################
+# main
+#
+
+usage () {
+	scriptname=$(basename ${0})
+   cat <<EOF
+Usage: $scriptname
+       usually we do:
+         - configure in the code the define_var part
+         - prepare for the installation of mathematica
+             $scriptname -p
+         - install the software itself
+             /media/briner/mathematica_9.0/Unix/Installer/MathInstaller
+         - rsync the installation on packaging/soft/version/rsync
+             $scriptname -r
+         - make a deb package of the software
+            $scriptname -m
+   -h   displays basic help
+   -v   verbose
+   -l   stdout and stderr to \$LOG_PATH(${LOG_PATH})
+   -p   prepare the OS to install ${SOFT}
+   -r   rsync <where should be the definitive soft> to <dir in the packaging space>
+   -m   make a deb of the software
+EOF
+   exit 0
+}
+
+IS_AN_OPTION="False"
+IS_PREPARE="False"
+IS_RSYNC="False"
+IS_MAKE_DEB="False"
+while getopts ":hvlprdm" opt; do
+  IS_AN_OPTION="True"
+  case $opt in
+    h)
+      usage
+      ;;
+    v)
+      IS_WRAP_SSL="True"
+      IS_WRAP_SOMETHING="True"
+      ;;
+    l)
+      echo "not yet implemented"
+      usage
+      ;;
+    p)
+      IS_PREPARE="True"
+      ;;
+    r)
+      IS_RSYNC="True"
+      ;;
+    m)
+      IS_MAKE_DEB="True"
+      ;;
+    *)
+      echo "unknown option"
+      usage
+  esac
+done
+
+
+shift $((OPTIND-1))
+
+if test "${IS_AN_OPTION}" = "False"
+then
+    usage
+fi
+
+if test "${IS_PREPARE}" = "True"
+then
+    echo "extract RPMs 2 directory with cpio"
+    echo "----------------------------------"
+    prepare_install | sed -u "s|^|     |"
+    cd ${MAIN_DIR}
+    rpm2dir | sed -u "s|^|  |"
+fi
+
+if test "${IS_RSYNC}" = "True"
+then
+    echo
+    echo "syncing it"
+    echo "----------"
+    cd ${MAIN_DIR}
+    rsync_it | sed -u "s|^|     |"
+fi
+
+if test "${IS_MAKE_DEB}" = "True"
+then
+    echo
+    echo " - make a deb"
+    echo "   ----------"
+    cd ${MAIN_DIR}
+    make_deb | sed -u "s|^|     |"
+
+    echo
+    echo "check the new package created"
+    echo "-----------------------------"
+    last_output | sed -u "s|^|  |"
+fi
+
+
+
