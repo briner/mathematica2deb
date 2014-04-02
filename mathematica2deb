@@ -12,40 +12,53 @@ fi
 # DEFINITION
 #
 
-export SOFT=mathematica
-export SHORT_SOFT_VER=90
-export SOFT_VER=9.0.1
-export DEB_VER=0
+#
+# software related
+SOFT="mathematica"
+SOFT_VER=9.0.1
+SHORT_SOFT_VER=90
 
-# where the matlab files will be installed
-export OPT_PATH=/opt/uau/mathematica90
-
-# root directory where the package will be installed
-export MAIN_DIR=~/packaging/mathematica/90
-
+#
+# package related
+DEB_VER=0
 SHORT_ORG=UniGE ; # a short name of your organisation
-
-# email of the packager of these
+# where the soft will be installed : PKG_ROOT_DIR
+PKG_ROOT_DIR="/opt/${SHORT_ORG,,}/${SOFT}${SHORT_SOFT_VER}"
+#
+MAIN_DIR=~/packaging/mathematica/90
 EMAIL_MAINTAINER='Cedric BRINER <Cedric.Briner@UniGE.ch>'
+# where the iso of matlab is mounted
+export MATLAB_ISO_MOUNT_DIR='/media/briner/matlab_2014a'
 
 #
 # constructed variable
-export DEB_BUILD=${MAIN_DIR}/${SOFT}${SHORT_SOFT_VER}_${SOFT_VER}-${DEB_VER}
+# where the build will be constructed
+DEBNAME=${SHORT_ORG,,}-${SOFT}${SHORT_SOFT_VER}
+BUILD_DEB=${MAIN_DIR}/${DEBNAME}_${SOFT_VER}-${DEB_VER}
 
-prepare_install()
+
+###########################################################
+# FONCTIONS
+#
+
+install_it()
 {   
     cd ${MAIN_DIR}
+    if ! touch ${PKG_ROOT_DIR}/is_writable
+    then
+        echo "arrgh, dir(${PKG_ROOT_DIR}) is not writable by ${USERNAME}"
+        echo "  please creute the dir (${PKG_ROOT_DIR}) and gives right for user(${USERNAME})"
+        echo " - sudo -s (ubuntu) or su - (debian)"
+        echo " - mkdir -p ${PKG_ROOT_DIR}"
+        echo " - chown ${USERNAME}: ${PKG_ROOT_DIR}"    
+        echo " - exit"
+        exit 1
+    fi
+    rm -f ${PKG_ROOT_DIR}/is_writable
     #
     #
-    #
-    echo "prepare the root FS to be able to install matlab under ${OPT_PATH}"
-    sudo mkdir -p ${OPT_PATH}
-    sudo chown briner:  ${OPT_PATH}
-    #
-    #
-    #
-    echo "install it under ${OPT_PATH}"
-    echo "specify  ${OPT_PATH}/bin for the path in which the Wolfram Mathematica script(s) will be created"
+    echo "install it under ${PKG_ROOT_DIR}"
+    echo "specify  ${PKG_ROOT_DIR}/bin for the path in which the Wolfram Mathematica script(s) will be created"
 }
 
 ###########################################################
@@ -54,29 +67,30 @@ prepare_install()
 
 rsync_it()
 {
-    test -d  ${MAIN_DIR}/rsync_${SOFT} || mkdir -p ${MAIN_DIR}/rsync_${SOFT}
+    test -d  ${MAIN_DIR}/rsync || mkdir -p ${MAIN_DIR}/rsync
     echo -n "this can take time… "
-    rsync -q -avHl --force --delete ${OPT_PATH}/ ${MAIN_DIR}/rsync_${SOFT}/
+    rsync -q -avHl --force --delete ${PKG_ROOT_DIR}/ ${MAIN_DIR}/rsync/
     echo "done"
 }
-
 
 make_deb()
 {
     cd ${MAIN_DIR}
     #
     #
-    # rapatriate the fresh install to the DEB_BUILD SPACE
-    rm -fr ${DEB_BUILD}
-    mkdir -p ${DEB_BUILD}/{${OPT_PATH},usr/bin,DEBIAN}
-    mkdir -p ${DEB_BUILD}/{usr/share/pixmaps,usr/share/applications}
-    rsync -avHlq  ${MAIN_DIR}/rsync_${SOFT}/ ${DEB_BUILD}/${OPT_PATH}/
+    # rapatriate the fresh install to the BUILD_DEB SPACE
+    rm -fr ${BUILD_DEB}
+    mkdir -p ${BUILD_DEB}/{${PKG_ROOT_DIR},usr/bin,DEBIAN}
+    mkdir -p ${BUILD_DEB}/{usr/share/pixmaps,usr/share/applications}
+    rsync -avq --force --delete \
+          --link-dest=${MAIN_DIR}/rsync \
+          ${MAIN_DIR}/rsync/ ${BUILD_DEB}/${PKG_ROOT_DIR}/
     #
     #
     # creation of the symlink in /usr/bin
-    rsync -avHlq --force --delete  ${MAIN_DIR}/rsync_${SOFT}/bin/  ${DEB_BUILD}/${OPT_PATH}/bin/
-    cd ${DEB_BUILD}/usr/bin
-    for filebin in ../../${OPT_PATH}/bin/* ; do
+    rsync -avHlq --force --delete  ${MAIN_DIR}/rsync/bin/  ${BUILD_DEB}/${PKG_ROOT_DIR}/bin/
+    cd ${BUILD_DEB}/usr/bin
+    for filebin in ../../${PKG_ROOT_DIR}/bin/* ; do
         echo $filebin
         linkname=$(basename ${filebin})${SHORT_SOFT_VER}
         mv ${filebin} ${linkname}
@@ -85,55 +99,54 @@ make_deb()
     #
     #
     # creation of the DEBIAN/control
-    cat  > ${DEB_BUILD}/DEBIAN/control << EOF
-Package: ${SOFT}${SHORT_SOFT_VER}
+    cat  > ${BUILD_DEB}/DEBIAN/control << EOF
+Package: ${DEBNAME}
 Version: ${SOFT_VER}-${DEB_VER}
 Architecture: amd64
 Maintainer: ${EMAIL_MAINTAINER}
 Section: main
 Priority: extra
-Depends: xmaxima, ubuntu-at-unige
-Description: ${SOFT} @ ${SHORT_ORG}
+Depends: xmaxima
+Description: ${SOFT}${SHORT_SOFT_VER} @ ${SHORT_ORG}
 EOF
     #
     #
     # creation of the DEBIAN/postrm (post-remove)
-    cat > ${DEB_BUILD}/DEBIAN/postrm << EOF
+    cat > ${BUILD_DEB}/DEBIAN/postrm << EOF
 #!/bin/bash
-rm -fr ${OPT_PATH}
+rm -fr ${PKG_ROOT_DIR}
 EOF
-    chmod 755  ${DEB_BUILD}/DEBIAN/postrm
+    chmod 755  ${BUILD_DEB}/DEBIAN/postrm
     #
     #
     # DESKTOP icon
-    unzip -p ${DEB_BUILD}/${OPT_PATH}/SystemFiles/Java/WolframSSH.jar  com/wolfram/Common/math.png \
-          > ${DEB_BUILD}/usr/share/pixmaps/${SOFT}${SHORT_SOFT_VER}.png
-    cat > ${DEB_BUILD}/usr/share/applications/${SOFT}${SHORT_SOFT_VER}.desktop << EOF
+    convert ${MAIN_DIR}/../mathematica2deb.d/mathematica.png -resize 128x128 -pointsize 48 -gravity northeast -annotate 0 "${SHORT_SOFT_VER}" ${BUILD_DEB}/usr/share/pixmaps/${DEBNAME}.png
+    cat > ${BUILD_DEB}/usr/share/applications/${DEBNAME}.desktop << EOF
 [Desktop Entry]
 Version=1.0
 Name=${SOFT} ${SOFT_VER}
 Comment=Why not trying freesoftware as xmaxima
 Exec=${SOFT}${SHORT_SOFT_VER}
-Icon=${SOFT}${SHORT_SOFT_VER}.png
+Icon=${DEBNAME}.png
 Terminal=false
 Type=Application
-Categories=Development;ubuntu-at-unige;
+Categories=Development;
 EOF
     
     #
     #
     # construct the package
-    fakeroot dpkg -b ${DEB_BUILD}
+    fakeroot dpkg -b ${BUILD_DEB}
     #
     #
     # check rm -fr
     echo "check rm -fr in postrm"
     echo "-----------------------"
-    grep 'rm -fr' ${DEB_BUILD}/DEBIAN/control
+    grep 'rm -fr' ${BUILD_DEB}/DEBIAN/control
 
     echo 'before installing, remove the installation made if the matlab installer' 
     echo '-----------------------------------------------------------------------'
-    echo "with: sudo rm -fr ${OPT_PATH}"
+    echo "with: sudo rm -fr ${PKG_ROOT_DIR}"
 }
 
 ###########################################################
@@ -141,7 +154,6 @@ EOF
 #
 last_output()
 {
-define_variable
 echo "do fo eg: sudo dpkg  -i ${MAIN_DIR}/*deb"
 }
 
@@ -156,7 +168,7 @@ Usage: $scriptname
        usually we do:
          - configure in the code the define_var part
          - prepare for the installation of mathematica
-             $scriptname -p
+             $scriptname -i
          - install the software itself
              /media/briner/mathematica_9.0/Unix/Installer/MathInstaller
          - rsync the installation on packaging/soft/version/rsync
@@ -174,10 +186,10 @@ EOF
 }
 
 IS_AN_OPTION="False"
-IS_PREPARE="False"
+IS_INSTALL="False"
 IS_RSYNC="False"
 IS_MAKE_DEB="False"
-while getopts ":hvlprdm" opt; do
+while getopts ":hvlirdm" opt; do
   IS_AN_OPTION="True"
   case $opt in
     h)
@@ -191,8 +203,8 @@ while getopts ":hvlprdm" opt; do
       echo "not yet implemented"
       usage
       ;;
-    p)
-      IS_PREPARE="True"
+    i)
+      IS_INSTALL="True"
       ;;
     r)
       IS_RSYNC="True"
@@ -214,14 +226,13 @@ then
     usage
 fi
 
-if test "${IS_PREPARE}" = "True"
+if test "${IS_INSTALL}" = "True"
 then
-    echo "extract RPMs 2 directory with cpio"
-    echo "----------------------------------"
-    prepare_install | sed -u "s|^|     |"
-    cd ${MAIN_DIR}
-    rpm2dir | sed -u "s|^|  |"
+    echo "installation of mathematica"
+    echo "--------------------"
+    install_it | sed -u "s|^|  |"
 fi
+
 
 if test "${IS_RSYNC}" = "True"
 then
